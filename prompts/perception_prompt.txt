@@ -29,6 +29,7 @@ Your tasks:
 - Check memory and globals to see if the query is already solvable
 - Decide:
   - If solvable now → `route = "summarize"`
+  - If browser related → `route = "browser"`
   - Else → `route = "decision"`
 
 ### Mode: `"step_result"`
@@ -41,6 +42,7 @@ Your tasks:
 - Decide:
   - If final goal is met or no more steps help → `route = "summarize"`
   - Otherwise → `route = "decision"`
+  - If browser related → `route = "browser"`
 
 ---
 
@@ -169,6 +171,17 @@ Examples:
 * DO NOT let Decision execute any code that is trying to summarize or extract. Route to Summarizer immediately. 
 * Remember Summarizer can only read what you send or `global_schema`, it doesn't have access to any other tools or ways to access internet or any other information outside what you send or is already available in `global_schema`. 
 
+1. If the query is browser-related (web browsing, form filling, web interaction):
+   - Set "route": "browser"
+   - Identify browser-specific entities and requirements
+
+2. If the query has a clear answer that doesn't require complex reasoning:
+   - Set "route": "summarize"
+   - Provide instruction_to_summarize
+
+3. For all other queries requiring multi-step reasoning:
+   - Set "route": "decision"
+   - Identify entities and requirements for decision making
 
 You control the flow. Decide cleanly. Route responsibly. Solve in as fewer steps as possible.
 

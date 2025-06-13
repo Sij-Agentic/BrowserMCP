@@ -9,10 +9,13 @@ from agent.agentSession import AgentSession
 from memory.memory_search import MemorySearch
 from action.execute_step import execute_step_with_mode
 from utils.utils import log_step, log_error, save_final_plan, log_json_block
+from browser.browser import Browser, build_browser_input
+
 
 class Route:
     SUMMARIZE = "summarize"
     DECISION = "decision"
+    BROWSER = "browser"
 
 class StepType:
     ROOT = "ROOT"
@@ -20,10 +23,11 @@ class StepType:
 
 
 class AgentLoop:
-    def __init__(self, perception_prompt, decision_prompt, summarizer_prompt, multi_mcp, strategy="exploratory"):
+    def __init__(self, perception_prompt, decision_prompt, summarizer_prompt, browser_navigation_prompt, browser_action_prompt, multi_mcp, strategy="exploratory"):
         self.perception = Perception(perception_prompt)
         self.decision = Decision(decision_prompt, multi_mcp)
         self.summarizer = Summarizer(summarizer_prompt)
+        self.browser = Browser(browser_navigation_prompt, browser_action_prompt, multi_mcp)
         self.multi_mcp = multi_mcp
         self.strategy = strategy
         self.status: str = "in_progress"
@@ -31,6 +35,10 @@ class AgentLoop:
     async def run(self, query: str):
         self._initialize_session(query)
         await self._run_initial_perception()
+
+        # Handle browser route
+        if self.p_out.get("route") == "browser":
+            return await self._run_browser()
 
         if self._should_early_exit():
             return await self._summarize()
@@ -46,6 +54,36 @@ class AgentLoop:
             return self.final_output
 
         return await self._handle_failure()
+
+    async def _run_browser(self):
+        """Execute browser agent for direct browser tasks"""
+        log_step("🌐 Running Browser Agent", symbol="→")
+        
+        # Build browser input
+        b_input = build_browser_input(self.query, self.ctx)
+        
+        # Run browser agent
+        browser_result = await self.browser.run(b_input, session=self.session)
+        
+        # Store result in context
+        self.ctx.globals["browser_result"] = browser_result
+        
+        # Update perception with browser result
+        p_input = build_perception_input(
+            self.query, 
+            self.memory, 
+            self.ctx, 
+            snapshot_type="browser_result"
+        )
+        self.p_out = await self.perception.run(p_input, session=self.session)
+        
+        # Generate summary
+        return await self.summarizer.summarize(
+            self.query, 
+            self.ctx, 
+            self.p_out, 
+            self.session
+        )
 
     def _initialize_session(self, query):
         self.session_id = str(uuid.uuid4())

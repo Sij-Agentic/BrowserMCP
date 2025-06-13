@@ -33,6 +33,8 @@ async def interactive() -> None:
         perception_prompt="prompts/perception_prompt.txt",
         decision_prompt="prompts/decision_prompt.txt",
         summarizer_prompt="prompts/summarizer_prompt.txt",
+        browser_navigation_prompt="prompts/browser_navigation_prompt.txt",
+        browser_action_prompt="prompts/browser_action_prompt.txt",
         multi_mcp=multi_mcp,
         strategy="exploratory"
     )
