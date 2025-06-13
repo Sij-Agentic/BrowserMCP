@@ -636,10 +636,31 @@ async def handle_tool_call(name: str, arguments: dict) -> list[dict]:
                         )
                         return [{"type": "text", "text": result.model_dump_json(indent=2, exclude_none=True)}]
                     else:
+                        # Get all clickable elements before filtering
+                        from browserMCP.dom.clickable_element_processor.service import ClickableElementProcessor
+                        all_elements = ClickableElementProcessor.get_clickable_elements(state.element_tree)
+                        print(f"\n🔍 UNFILTERED ELEMENTS: {len(all_elements)} total interactive elements found")
+                        
+                        # Log some info about unfiltered elements
+                        unfiltered_elements = []
+                        for i, element in enumerate(all_elements[:20]):  # Limit to first 20 for brevity
+                            text = element.get_all_text_till_next_clickable_element().strip()[:50]
+                            attributes = []
+                            for attr in ["id", "name", "placeholder", "type", "href"]:
+                                if attr in element.attributes and element.attributes[attr]:
+                                    attributes.append(f"{attr}='{element.attributes[attr]}'")
+                            attr_str = " " + " ".join(attributes) if attributes else ""
+                            unfiltered_elements.append(f"[{i}]<{element.tag_name}{attr_str}>{text} />")
+                        
+                        print("\n".join(unfiltered_elements))
+                        print(f"\n... and {len(all_elements) - 20} more elements (truncated)\n")
+                        
+                        # Now get filtered elements
                         elements = await filter_essential_interactive_elements(
                             state.element_tree, 
                             strict_mode=strict_mode
                         )
+                        print(f"\n🔍 FILTERED ELEMENTS: {len(elements)} elements after filtering (strict_mode={strict_mode})")
                         
                         formatted_elements = []
                         for element in elements:
@@ -652,6 +673,9 @@ async def handle_tool_call(name: str, arguments: dict) -> list[dict]:
                             
                             attr_str = " " + " ".join(attributes) if attributes else ""
                             formatted_elements.append(f"[{element.highlight_index}]<{element.tag_name}{attr_str}>{text} />")
+                        
+                        print("\n".join(formatted_elements))
+                        print("\n")
                         
                         return [{"type": "text", "text": "\n".join(formatted_elements)}]
                 finally:

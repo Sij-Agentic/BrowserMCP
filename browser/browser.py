@@ -28,7 +28,7 @@ class Browser:
         # Get interactive elements after navigation
         log_step("[RETRIEVING INTERACTIVE ELEMENTS...]", symbol="→")
         elements = await self._get_interactive_elements(session)
-        log_step(f"[FOUND {len(elements['context'])} INTERACTIVE ELEMENTS]", symbol="←")
+        log_step(f"[FOUND {len(elements['content'])} INTERACTIVE ELEMENTS]", symbol="←")
         
         # STAGE 2: Action Planning and Execution
         log_step("[STARTING ACTION STAGE...]", symbol="→")
@@ -83,12 +83,15 @@ class Browser:
             log_error("🛑 ERROR GETTING INTERACTIVE ELEMENTS:", e)
             return []
             
-    async def _execute_action_stage(self, b_input: dict, elements: list, session: Optional[AgentSession] = None) -> dict:
+    async def _execute_action_stage(self, b_input: dict, elements: dict, session: Optional[AgentSession] = None) -> dict:
         """Execute the action stage using the actual elements on the page"""
-        # Combine original input with elements
+        # Process the interactive elements to make them more usable for the LLM
+        processed_elements = self._process_interactive_elements(elements)
+        
+        # Combine original input with processed elements
         action_input = {
             **b_input,
-            "interactive_elements": elements
+            "interactive_elements": processed_elements
         }
         
         prompt_template = Path(self.action_prompt_path).read_text(encoding="utf-8")
@@ -172,10 +175,82 @@ class Browser:
             return [self._make_serializable(item) for item in obj]
         elif isinstance(obj, dict):
             return {k: self._make_serializable(v) for k, v in obj.items()}
-        # Special handling for CallToolResult objects
-        elif hasattr(obj, '__dict__'):
+        elif hasattr(obj, "model_dump"):
+            return self._make_serializable(obj.model_dump())
+        elif hasattr(obj, "to_dict"):
+            return self._make_serializable(obj.to_dict())
+        elif hasattr(obj, "__dict__"):
             # Convert object to dictionary and then make it serializable
             obj_dict = {}
+            for k, v in obj.__dict__.items():
+                if not k.startswith('_'):  # Skip private attributes
+                    obj_dict[k] = self._make_serializable(v)
+            return obj_dict
+        # For any other types, convert to string
+        return str(obj)
+        
+    def _process_interactive_elements(self, elements):
+        """Process interactive elements to make them more usable for the LLM"""
+        try:
+            # If elements is already a well-structured object, return it
+            if isinstance(elements, dict) and "content" in elements:
+                content = elements.get("content", [])
+                
+                # If content is a list of objects with text fields, extract and parse them
+                if isinstance(content, list) and len(content) > 0:
+                    # Extract the text content from each element
+                    elements_text = ""
+                    for item in content:
+                        if isinstance(item, dict) and "text" in item:
+                            elements_text += item["text"] + "\n"
+                    
+                    # Parse the text into structured elements
+                    structured_elements = []
+                    lines = elements_text.strip().split("\n")
+                    
+                    for line in lines:
+                        # Look for pattern like [2]<div>Text />
+                        if "[" in line and "<" in line and ">" in line:
+                            try:
+                                index = int(line.split("[")[1].split("]")[0])
+                                tag = line.split("<")[1].split(">")[0]
+                                text = line.split(">")[1].split("/>")[0].strip()
+                                
+                                element_info = {
+                                    "index": index,
+                                    "tag": tag,
+                                    "text": text
+                                }
+                                
+                                # Extract attributes if present
+                                if " " in tag:
+                                    base_tag = tag.split(" ")[0]
+                                    attrs_text = tag[len(base_tag):].strip()
+                                    element_info["tag"] = base_tag
+                                    
+                                    # Parse attributes like type='text'
+                                    attrs = {}
+                                    for attr in attrs_text.split(" "):
+                                        if "=" in attr:
+                                            key, value = attr.split("=", 1)
+                                            attrs[key] = value.strip("'").strip('"')
+                                    
+                                    element_info["attributes"] = attrs
+                                
+                                structured_elements.append(element_info)
+                            except Exception as e:
+                                print(f"Error parsing element line: {line}, error: {e}")
+                    
+                    return {
+                        "elements": structured_elements,
+                        "raw_text": elements_text
+                    }
+            
+            # If we couldn't parse it, return the original elements
+            return elements
+        except Exception as e:
+            log_error("Error processing interactive elements:", e)
+            return elements
             for k, v in obj.__dict__.items():
                 if not k.startswith('_'):  # Skip private attributes
                     obj_dict[k] = self._make_serializable(v)
