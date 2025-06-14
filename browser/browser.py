@@ -18,7 +18,7 @@ class Browser:
         self.multi_mcp = multi_mcp
         self.model = ModelManager()
 
-    async def run(self, b_input: dict, session: Optional[AgentSession] = None) -> dict:
+    async def run(self, b_input: dict, session: Optional[AgentSession] = None, max_iterations: int = 10) -> dict:
         # STAGE 1: Navigation and Element Discovery
         log_step("[STARTING NAVIGATION STAGE...]", symbol="→")
         navigation_result = await self._execute_navigation_stage(b_input, session)
@@ -30,18 +30,70 @@ class Browser:
         elements = await self._get_interactive_elements(session)
         log_step(f"[FOUND {len(elements['content'])} INTERACTIVE ELEMENTS]", symbol="←")
         
-        # STAGE 2: Action Planning and Execution
-        log_step("[STARTING ACTION STAGE...]", symbol="→")
-        action_result = await self._execute_action_stage(b_input, elements, session)
+        # Initialize results collection
+        all_results = []
+        all_results.extend(navigation_result.get("results", []))
+        
+        # STAGE 2: Iterative Action Planning and Execution
+        # We'll run multiple iterations to handle multi-step UI workflows
+        current_iteration = 0
+        b_input_with_history = b_input.copy()
+        b_input_with_history["action_history"] = []
+        task_complete = False
+        
+        while current_iteration < max_iterations and not task_complete:
+            current_iteration += 1
+            log_step(f"[STARTING ACTION STAGE (ITERATION {current_iteration}/{max_iterations})...]", symbol="→")
+            
+            # Add previous actions to context for the LLM
+            if current_iteration > 1:
+                log_step(f"[PROVIDING CONTEXT FROM {len(b_input_with_history['action_history'])} PREVIOUS ACTIONS]", symbol="→")
+            
+            # Execute action stage with current elements
+            action_result = await self._execute_action_stage(b_input_with_history, elements, session)
+            
+            # Store results
+            if "results" in action_result:
+                all_results.extend(action_result.get("results", []))
+            
+            # Update action history
+            if "steps" in action_result:
+                b_input_with_history["action_history"].append({
+                    "iteration": current_iteration,
+                    "steps": action_result.get("steps", [])
+                })
+            
+            # Check if we need to continue
+            if not action_result.get("success", False):
+                log_step(f"[ACTION STAGE FAILED ON ITERATION {current_iteration}]", symbol="❌")
+                break
+            
+            # Check if the action plan indicates completion
+            # This could be explicit in the action_result or determined by analyzing the steps
+            last_steps = action_result.get("steps", [])
+            
+            # Check if the last step is not get_interactive_elements or wait
+            # If so, we assume the task is complete
+            if last_steps and len(last_steps) > 0:
+                last_step = last_steps[-1]
+                last_tool = last_step.get("tool", "")
+                if last_tool not in ["get_interactive_elements", "wait"]:
+                    task_complete = True
+                    log_step(f"[TASK COMPLETED ON ITERATION {current_iteration}]", symbol="✅")
+                    break
+            
+            if current_iteration < max_iterations and not task_complete:
+                # Get updated interactive elements for next iteration
+                log_step("[RETRIEVING UPDATED INTERACTIVE ELEMENTS...]", symbol="→")
+                elements = await self._get_interactive_elements(session)
+                log_step(f"[FOUND {len(elements['content'])} UPDATED INTERACTIVE ELEMENTS]", symbol="←")
         
         # Combine results
         return {
-            "success": navigation_result.get("success", False) and action_result.get("success", False),
-            "navigation_results": navigation_result.get("results", []),
-            "action_results": action_result.get("results", []),
-            "summary": self._generate_summary(
-                navigation_result.get("results", []) + action_result.get("results", [])
-            )
+            "success": navigation_result.get("success", False) and (task_complete or current_iteration >= max_iterations),
+            "iterations_completed": current_iteration,
+            "results": all_results,
+            "summary": self._generate_summary(all_results)
         }
         
     async def _execute_navigation_stage(self, b_input: dict, session: Optional[AgentSession] = None) -> dict:
@@ -94,12 +146,22 @@ class Browser:
             "interactive_elements": processed_elements
         }
         
+        # Add iteration context if available
+        iteration_context = ""
+        if "action_history" in b_input and len(b_input["action_history"]) > 0:
+            iteration_context = "\n\nPrevious actions:\n" + json.dumps(b_input["action_history"], indent=2)
+        
+        # Remove action_history from the JSON to avoid making the prompt too large
+        if "action_history" in action_input:
+            del action_input["action_history"]
+        
         prompt_template = Path(self.action_prompt_path).read_text(encoding="utf-8")
         full_prompt = (
             f"{prompt_template.strip()}\n\n"
             "```json\n"
             f"{json.dumps(action_input, indent=2)}\n"
             "```"
+            f"{iteration_context}"
         )
         
         log_step("[SENDING ACTION PROMPT TO BROWSER AGENT...]", symbol="→")
@@ -110,7 +172,14 @@ class Browser:
             print("Action response:", response)
             action_plan = parse_llm_json(response)
             print("Action plan:", json.dumps(action_plan, indent=2))
-            return await self._execute_browser_plan(action_plan, session)
+            
+            # Execute the browser plan
+            result = await self._execute_browser_plan(action_plan, session)
+            
+            # Add steps to the result for tracking
+            result["steps"] = action_plan.get("steps", [])
+            
+            return result
         except Exception as e:
             log_error("🛑 EXCEPTION IN ACTION STAGE:", e)
             return {
