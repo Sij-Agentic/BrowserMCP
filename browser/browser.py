@@ -10,6 +10,12 @@ from agent.agentSession import AgentSession
 from utils.utils import log_step, log_error
 from utils.json_parser import parse_llm_json
 from agent.model_manager import ModelManager
+from browser.browser_logger import (
+    log_separator, log_navigation_start, log_navigation_plan, 
+    log_navigation_result, log_interactive_elements, log_action_start, 
+    log_action_plan, log_action_result, log_tool_execution, 
+    log_error as browser_log_error, log_workflow_complete
+)
 
 class Browser:
     def __init__(self, navigation_prompt_path: str, action_prompt_path: str, multi_mcp):
@@ -19,16 +25,23 @@ class Browser:
         self.model = ModelManager()
 
     async def run(self, b_input: dict, session: Optional[AgentSession] = None, max_iterations: int = 10) -> dict:
+        # Log the input request
+        log_separator("BROWSER AGENT RUN START")
+        log_navigation_start(b_input.get("query", "No query provided"))
+        
         # STAGE 1: Navigation and Element Discovery
         log_step("[STARTING NAVIGATION STAGE...]", symbol="→")
         navigation_result = await self._execute_navigation_stage(b_input, session)
         if not navigation_result.get("success", False):
+            log_workflow_complete(False, "Navigation stage failed")
             return navigation_result
             
         # Get interactive elements after navigation
         log_step("[RETRIEVING INTERACTIVE ELEMENTS...]", symbol="→")
         elements = await self._get_interactive_elements(session)
         log_step(f"[FOUND {len(elements['content'])} INTERACTIVE ELEMENTS]", symbol="←")
+        # Log the interactive elements
+        log_interactive_elements(elements, "AFTER NAVIGATION")
         
         # Initialize results collection
         all_results = []
@@ -44,6 +57,8 @@ class Browser:
         while current_iteration < max_iterations and not task_complete:
             current_iteration += 1
             log_step(f"[STARTING ACTION STAGE (ITERATION {current_iteration}/{max_iterations})...]", symbol="→")
+            # Log the start of this action iteration
+            log_action_start(current_iteration, max_iterations)
             
             # Add previous actions to context for the LLM
             if current_iteration > 1:
@@ -87,13 +102,21 @@ class Browser:
                 log_step("[RETRIEVING UPDATED INTERACTIVE ELEMENTS...]", symbol="→")
                 elements = await self._get_interactive_elements(session)
                 log_step(f"[FOUND {len(elements['content'])} UPDATED INTERACTIVE ELEMENTS]", symbol="←")
+                # Log the updated interactive elements
+                log_interactive_elements(elements, f"AFTER ITERATION {current_iteration}")
         
         # Combine results
+        success = navigation_result.get("success", False) and (task_complete or current_iteration >= max_iterations)
+        summary = self._generate_summary(all_results)
+        
+        # Log workflow completion
+        log_workflow_complete(success, summary)
+        
         return {
-            "success": navigation_result.get("success", False) and (task_complete or current_iteration >= max_iterations),
+            "success": success,
             "iterations_completed": current_iteration,
             "results": all_results,
-            "summary": self._generate_summary(all_results)
+            "summary": summary
         }
         
     async def _execute_navigation_stage(self, b_input: dict, session: Optional[AgentSession] = None) -> dict:
@@ -114,9 +137,20 @@ class Browser:
             print("Navigation response:", response)
             navigation_plan = parse_llm_json(response)
             print("Navigation plan:", json.dumps(navigation_plan, indent=2))
-            return await self._execute_browser_plan(navigation_plan, session)
+            
+            # Log the navigation plan
+            log_navigation_plan(navigation_plan)
+            
+            # Execute the plan
+            result = await self._execute_browser_plan(navigation_plan, session)
+            
+            # Log the navigation result
+            log_navigation_result(result)
+            
+            return result
         except Exception as e:
             log_error("🛑 EXCEPTION IN NAVIGATION STAGE:", e)
+            browser_log_error("EXCEPTION IN NAVIGATION STAGE", e)
             return {
                 "success": False,
                 "error": str(e),
@@ -130,9 +164,14 @@ class Browser:
             # Make sure the result is serializable
             serializable_result = self._make_serializable(result)
             print("Interactive elements:", json.dumps(serializable_result, indent=2))
+            
+            # Log the interactive elements
+            log_interactive_elements(serializable_result, "RAW ELEMENTS")
+            
             return serializable_result
         except Exception as e:
             log_error("🛑 ERROR GETTING INTERACTIVE ELEMENTS:", e)
+            browser_log_error("ERROR GETTING INTERACTIVE ELEMENTS", e)
             return []
             
     async def _execute_action_stage(self, b_input: dict, elements: dict, session: Optional[AgentSession] = None) -> dict:
@@ -173,15 +212,22 @@ class Browser:
             action_plan = parse_llm_json(response)
             print("Action plan:", json.dumps(action_plan, indent=2))
             
+            # Log the action plan
+            log_action_plan(action_plan)
+            
             # Execute the browser plan
             result = await self._execute_browser_plan(action_plan, session)
             
             # Add steps to the result for tracking
             result["steps"] = action_plan.get("steps", [])
             
+            # Log the action result
+            log_action_result(result)
+            
             return result
         except Exception as e:
             log_error("🛑 EXCEPTION IN ACTION STAGE:", e)
+            browser_log_error("EXCEPTION IN ACTION STAGE", e)
             return {
                 "success": False,
                 "error": str(e),
@@ -213,6 +259,9 @@ class Browser:
                 # Convert non-serializable objects to strings
                 serializable_result = self._make_serializable(result)
                 
+                # Log the tool execution
+                log_tool_execution(tool_name, params, serializable_result)
+                
                 results.append({
                     "step": step,
                     "success": True,
@@ -220,6 +269,7 @@ class Browser:
                 })
             except Exception as e:
                 log_error(f"🛑 Error executing browser tool {tool_name}:", e)
+                browser_log_error(f"Error executing browser tool {tool_name}", e)
                 results.append({
                     "step": step,
                     "success": False,
