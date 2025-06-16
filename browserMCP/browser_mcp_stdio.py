@@ -115,7 +115,8 @@ async def get_dropdown_options(ctx: Context, index: int) -> str:
 @mcp.tool()
 async def select_dropdown_option(ctx: Context, index: int, option_text: str) -> str:
     """Select dropdown option by text"""
-    return await generic_tool_handler("select_dropdown_option", ctx, index=index, option_text=option_text)
+    # Map option_text to text when calling the controller service
+    return await generic_tool_handler("select_dropdown_option", ctx, index=index, text=option_text)
 
 @mcp.tool()
 async def drag_drop(ctx: Context, from_index: int, to_index: int) -> str:

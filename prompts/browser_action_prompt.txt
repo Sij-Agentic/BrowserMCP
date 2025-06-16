@@ -38,6 +38,7 @@ Available interaction tools (ONLY these):
 - scroll_down: Scroll the page down
 - scroll_up: Scroll the page up
 - scroll_to_text: Scroll to specific text on the page
+- select_dropdown_option: Select an option from a dropdown by index and text (IMPORTANT: use 'text' parameter, not 'value' or 'option_text')
 - wait: Wait for a specified number of seconds (use this before get_interactive_elements)
 - get_interactive_elements: Refresh the list of interactive elements (use after page changes)
 
@@ -227,6 +228,40 @@ Input contains interactive elements including:
   ],
   "continue_on_error": false,
   "success_criteria": "Login form submitted successfully"
+}
+```
+
+### Example 3: Select an option from a dropdown menu
+
+Input contains interactive elements including:
+[5]<select name="country">Select Country</>
+
+```json
+{
+  "steps": [
+    {
+      "tool": "click_element_by_index",
+      "params": {"index": 5},
+      "description": "Click on the country dropdown menu (index 5)"
+    },
+    {
+      "tool": "select_dropdown_option",
+      "params": {"index": 5, "text": "United States"},
+      "description": "Select 'United States' from the dropdown menu"
+    },
+    {
+      "tool": "wait",
+      "params": {"seconds": 1},
+      "description": "Wait briefly for any UI updates after selection"
+    },
+    {
+      "tool": "get_interactive_elements",
+      "params": {},
+      "description": "Get updated interactive elements after selection"
+    }
+  ],
+  "continue_on_error": false,
+  "success_criteria": "Country dropdown value is set to 'United States'"
 }
 ```
 

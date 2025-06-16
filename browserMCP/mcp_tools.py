@@ -431,7 +431,10 @@ async def handle_tool_call(name: str, arguments: dict) -> list[dict]:
             return [{"type": "text", "text": result.content if result.success else result.error}]
             
         elif name == "select_dropdown_option":
-            input_obj = SelectDropdownOptionAction(index=arguments["index"], option_text=arguments["option_text"])
+            # Use 'text' parameter to match controller service expectation
+            # Look for 'text' first, fall back to 'option_text' for backward compatibility
+            text_value = arguments.get("text", arguments.get("option_text", ""))
+            input_obj = SelectDropdownOptionAction(index=arguments["index"], text=text_value)
             result = await execute_controller_action("select_dropdown_option", input_obj)
             return [{"type": "text", "text": result.content if result.success else result.error}]
             
